@@ -1,0 +1,56 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Seeder · Simulation Lab</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101915;color:#e5eee8}*{box-sizing:border-box}body{max-width:1100px;margin:0 auto;padding:32px}header{border-bottom:1px solid #34463b;padding-bottom:24px}small,.muted{color:#a6b9ac}h1{font-size:36px;margin:8px 0} .badge{color:#efc373;letter-spacing:2px;font-size:12px}.controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin:28px 0}button{background:#bfdf94;color:#142018;border:0;border-radius:5px;padding:12px 20px;font-weight:700;cursor:pointer}input{flex:1;min-width:150px;accent-color:#bfdf94}.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.metric{padding:22px;background:#1b2921;border:1px solid #34463b}.value{font-size:32px;margin-top:12px}.unit{font-size:13px;color:#a6b9ac}section{margin-top:28px}canvas{width:100%;height:210px;background:#17231c;border:1px solid #34463b}.fault{padding:15px;margin:8px 0;border-left:4px solid #efc373;background:#302b20}.healthy{color:#bfdf94}#error{color:#ffb5a8}footer{border-top:1px solid #34463b;margin-top:32px;padding-top:20px;font-size:13px}@media(max-width:650px){body{padding:20px}.metrics{grid-template-columns:1fr 1fr}h1{font-size:28px}}
+</style>
+<header><div class="badge">PORTFOLIO / SIMULATION LAB</div><h1>Smart Seeder Monitor</h1><small>One virtual metering channel · deterministic telemetry replay · no equipment connection</small></header>
+<p id="error" role="alert"></p><div class="controls"><button id="play">Pause</button><button id="reset">Restart</button><label for="seek">Time</label><input id="seek" type="range" min="0" max="0" value="0"><span id="clock">0 s</span></div>
+<div class="metrics" id="metrics"></div>
+<section><h2>Seed flow history</h2><p class="muted">Seeds per second · horizontal axis: simulated time (s)</p><canvas id="chart" aria-label="Seed flow in seeds per second over simulated time" role="img"></canvas></section>
+<section><h2>Active diagnostics</h2><div id="faults" aria-live="polite"></div></section>
+<section aria-labelledby="history-title"><h2 id="history-title">Fault history</h2><p class="muted">Events up to the selected replay time, newest first. Times and durations are simulated seconds. Cleared means no longer reported; it does not confirm a repair.</p><div id="history"></div></section>
+<footer>SIMULATED DATA ONLY. Educational monitoring demonstration. Thresholds are illustrative and are not Bourgault specifications. No control commands, CAN bus, or real agricultural equipment.</footer>
+<script>
+let rows=[],i=0,playing=true;const $=id=>document.getElementById(id);
+const descriptions={BLOCKAGE:'Seed flow below 5 seeds/s for 3 consecutive moving samples.',LOW_TANK:'Virtual tank level below 15%.',LOW_FAN:'Fan below 2,000 RPM while moving.',SENSOR_LOSS:'Virtual sensor disconnected; other diagnoses suppressed.',INVALID_SENSOR:'Reading outside the permitted demonstration range.'};
+// HISTORY_LOGIC_START
+function faultHistory(records, throughIndex) {
+ const episodes=[], active=new Map();
+ // Rebuild the replay prefix: seeking backward must never reveal future events.
+ for(let index=0;index<=throughIndex && index<records.length;index++) {
+  const sample=records[index], codes=new Set(sample.faults);
+  for(const [code,episode] of active) {
+   if(!codes.has(code)) {episode.cleared_s=sample.time_s;active.delete(code);}
+  }
+  for(const code of codes) {
+   if(!active.has(code)) {
+    const episode={code,started_s:sample.time_s,cleared_s:null};
+    episodes.push(episode);active.set(code,episode);
+   }
+  }
+ }
+ const now=records[Math.min(throughIndex,records.length-1)]?.time_s;
+ return episodes.map(e=>({...e,duration_s:(e.cleared_s??now)-e.started_s})).reverse();
+}
+// HISTORY_LOGIC_END
+function renderHistory() {
+ const container=$('history');container.replaceChildren();
+ const episodes=faultHistory(rows,i);
+ if(!episodes.length) {container.textContent='No faults observed by this replay time.';return;}
+ const list=document.createElement('ol');list.style.paddingLeft='24px';
+ for(const event of episodes) {
+  const item=document.createElement('li');item.style.marginBottom='14px';
+  const title=document.createElement('strong');title.textContent=event.code;
+  const detail=document.createElement('div');detail.className='muted';
+  detail.textContent=`Started ${event.started_s} s · ${event.cleared_s===null?'Active':`Cleared ${event.cleared_s} s`} · ${event.duration_s} s elapsed`;
+  item.append(title,detail);list.append(item);
+ }
+ container.append(list);
+}
+function render(){renderHistory();const r=rows[i];$('clock').textContent=r.time_s+' s';$('seek').value=i;
+ $('metrics').replaceChildren();for(const [label,key,unit] of [['Ground speed','speed_kph','km/h'],['Seed flow','flow_seeds_s','seeds/s'],['Tank level','tank_pct','%'],['Fan speed','fan_rpm','RPM']]){let card=document.createElement('div');card.className='metric';let title=document.createElement('small');title.textContent=label;let v=document.createElement('div');v.className='value';v.textContent=r.connected?r[key].toFixed(1):'—';let u=document.createElement('span');u.className='unit';u.textContent=unit;card.append(title,v,u);$('metrics').append(card)}
+ $('faults').replaceChildren();for(const code of r.faults){let d=document.createElement('div');d.className='fault';d.textContent=code+' · '+(descriptions[code]||'Unknown diagnostic');$('faults').append(d)}if(!r.faults.length){$('faults').textContent='No active faults';$('faults').className='healthy'}else $('faults').className='';
+ const c=$('chart'),ctx=c.getContext('2d');c.width=Math.max(320,c.clientWidth)*devicePixelRatio;c.height=210*devicePixelRatio;ctx.scale(devicePixelRatio,devicePixelRatio);let w=c.width/devicePixelRatio,h=210;ctx.strokeStyle='#415b49';ctx.fillStyle='#a6b9ac';ctx.font='12px system-ui';let max=Math.max(50,...rows.map(x=>x.flow_seeds_s));for(let n=0;n<=2;n++){let y=20+n*75;ctx.beginPath();ctx.moveTo(45,y);ctx.lineTo(w-20,y);ctx.stroke();ctx.fillText(Math.round(max*(1-n/2)),5,y+4)}ctx.fillText('0 s',45,198);ctx.fillText(rows.at(-1).time_s+' s',w-55,198);ctx.strokeStyle='#bfdf94';ctx.lineWidth=2;ctx.beginPath();for(let j=0;j<=i;j++){let x=45+j/Math.max(1,rows.length-1)*(w-65),y=170-rows[j].flow_seeds_s/max*150;if(!rows[j].connected){ctx.stroke();ctx.beginPath();continue}ctx.lineTo(x,y)}ctx.stroke();}
+$('play').onclick=()=>{playing=!playing;$('play').textContent=playing?'Pause':'Play'};$('reset').onclick=()=>{i=0;render()};$('seek').oninput=e=>{i=+e.target.value;render()};window.onresize=()=>rows.length&&render();
+fetch('/api/telemetry').then(r=>{if(!r.ok)throw Error('Cannot load telemetry');return r.json()}).then(data=>{rows=data;$('seek').max=rows.length-1;render();setInterval(()=>{if(playing&&i<rows.length-1){i++;render()}else if(i===rows.length-1){playing=false;$('play').textContent='Play'}},1000)}).catch(e=>{$('error').textContent='Replay unavailable: '+e.message});
+</script></html>
